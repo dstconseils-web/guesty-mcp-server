@@ -8,7 +8,6 @@ app.use(express.json());
 
 const GUESTY_CLIENT_ID = process.env.GUESTY_CLIENT_ID;
 const GUESTY_CLIENT_SECRET = process.env.GUESTY_CLIENT_SECRET;
-const GUESTY_API_URL = 'https://open-api.guesty.com/v1';
 
 let accessToken = null;
 let tokenExpiry = null;
@@ -17,12 +16,17 @@ async function getAccessToken() {
   if (accessToken && tokenExpiry && Date.now() < tokenExpiry) {
     return accessToken;
   }
-  const response = await axios.post('https://open-api.guesty.com/oauth2/token', {
-    grant_type: 'client_credentials',
-    scope: 'open-api',
-    client_id: GUESTY_CLIENT_ID,
-    client_secret: GUESTY_CLIENT_SECRET
-  }, { headers: { 'Content-Type': 'application/json' } });
+  
+  const params = new URLSearchParams();
+  params.append('grant_type', 'client_credentials');
+  params.append('scope', 'open-api');
+  params.append('client_id', GUESTY_CLIENT_ID);
+  params.append('client_secret', GUESTY_CLIENT_SECRET);
+  
+  const response = await axios.post('https://open-api.guesty.com/oauth2/token', params, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  });
+  
   accessToken = response.data.access_token;
   tokenExpiry = Date.now() + (response.data.expires_in * 1000) - 60000;
   return accessToken;
@@ -30,7 +34,7 @@ async function getAccessToken() {
 
 async function callGuesty(endpoint) {
   const token = await getAccessToken();
-  const response = await axios.get(`${GUESTY_API_URL}${endpoint}`, {
+  const response = await axios.get(`https://open-api.guesty.com/v1${endpoint}`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   return response.data;
@@ -77,24 +81,12 @@ app.get('/api/reservations', async (req, res) => {
 app.get('/api/rapport', async (req, res) => {
   try {
     const listingsData = await callGuesty('/listings?limit=100');
-    const ninetyDaysAgo = new Date();
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-    const reservationsData = await callGuesty(`/reservations?limit=500&checkIn[$gte]=${ninetyDaysAgo.toISOString()}`);
-    
-    const rapport = listingsData.results.map(listing => {
-      const listingReservations = reservationsData.results.filter(r => r.listingId === listing._id);
-      const totalNights = listingReservations.reduce((sum, r) => sum + (r.nightsCount || 0), 0);
-      const totalRevenue = listingReservations.reduce((sum, r) => sum + (r.money?.totalPrice || 0), 0);
-      return {
-        nom: listing.title || listing.nickname,
-        adresse: listing.address?.full,
-        chambres: listing.bedrooms,
-        capacite: listing.accommodates,
-        tauxOccupation90j: `${Math.round((totalNights / 90) * 100)}%`,
-        revenu90j: `${Math.round(totalRevenue)}€`,
-        prixMoyenNuit: totalNights > 0 ? `${Math.round(totalRevenue / totalNights)}€` : 'N/A'
-      };
-    });
+    const rapport = listingsData.results.map(listing => ({
+      nom: listing.title || listing.nickname,
+      adresse: listing.address?.full,
+      chambres: listing.bedrooms,
+      capacite: listing.accommodates
+    }));
     res.json({ success: true, genereLe: new Date().toISOString(), rapport });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
